@@ -1,0 +1,207 @@
+
+import numpy as np
+import tensorflow as tf
+from skimage import io
+import matplotlib.pyplot as plt
+%matplotlib inline
+import os
+import skimage
+import skimage.io as io
+from skimage import transform
+
+def load_data(data_directory,label):
+    """Loads the input data from locally stored directories"""
+    labels = []
+    images = []
+    for image in os.listdir(data_directory):
+        try:
+            images.append(skimage.io.imread(data_directory+"/"+image))
+            labels.append(label)
+        except FileNotFoundError:
+            print("not found")
+        except OSError:
+            print("corrupted")
+
+    return images, labels
+def extract_true_images(images,labels):
+    """Many of the images are corrupted or invalid, this helper function removes the worst offenders"""
+    photo_unavailable_image=np.load("photo_unavailable_image.npy")
+    true_images=[]
+    true_labels=[]
+    for jj in range(len(images)):
+        truth=(images[jj]==photo_unavailable_image)
+        if type(truth)==np.ndarray:
+            truth=truth.all()
+        if truth:
+            print(jj)
+        else:
+            true_images.append(images[jj])
+            true_labels.append(labels[jj])
+    return true_images,true_labels
+def get_batch(features,labels,batch_size):
+    """Selects a training batch from the total set"""
+    feature_length=len(features)
+    output_features=[]
+    output_labels=[]
+    for i in range(batch_size):
+        element_id=np.random.randint(0,feature_length)
+        output_features.append(features[element_id])
+        output_labels.append(labels[element_id])
+    return output_features,output_labels
+
+def create_test_set(images,labels,batch_size):
+    """Performs the train/test split"""
+    output_features=[]
+    output_labels=[]
+    for i in range(batch_size):
+        feature_length=len(images)
+        element_id=np.random.randint(0,feature_length)
+        output_features.append(images.pop(element_id))
+        output_labels.append(labels.pop(element_id))
+        
+    return output_features,output_labels
+
+###Below the data are loaded from their directories
+images,labels=[],[]
+data_directory="pets"
+images_0, labels_0=load_data(data_directory,0)
+images_0, labels_0=extract_true_images(images_0, labels_0)
+images+=images_0
+labels+=labels_0
+data_directory="hotdog"
+images_1, labels_1=load_data(data_directory,1)
+images_1, labels_1=extract_true_images(images_1, labels_1)
+images+=images_1
+labels+=labels_1
+data_directory="chili-dog"
+images_1, labels_1=load_data(data_directory,1)
+images_1, labels_1=extract_true_images(images_1, labels_1)
+images+=images_1
+labels+=labels_1
+data_directory="frankfurter"
+images_1, labels_1=load_data(data_directory,1)
+images_1, labels_1=extract_true_images(images_1, labels_1)
+images+=images_1
+labels+=labels_1
+data_directory="furniture"
+images_2, labels_2=load_data(data_directory,2)
+images_2, labels_2=extract_true_images(images_2, labels_2)
+images+=images_2
+labels+=labels_2
+data_directory="people"
+images_2, labels_2=load_data(data_directory,2)
+images_2, labels_2=extract_true_images(images_2, labels_2)
+images+=images_2
+labels+=labels_2
+
+#Here we perform the train/test split
+test_images,test_labels=create_test_set(images,labels,500)
+
+
+#
+#Here we set up our network.  The best results I was able to obtain were from the architecture:
+# 56x56x3 input --> 5x5x32 convolution layer --> 2x2 maxpool layer -> 1024 fully connected layer (relu) -> 3 logits with softmax
+# Obviously many other setups are possible, and this code can be changed with a couple keystrokes to add
+# another fully connected layer with dropout or another conv-pool set of layers.
+# For this problem, due to data scarcity, these additional layers did not contribute positively to the final result
+# If training for a long time, however, using the dropout layer was seen to combat overfitting
+#
+#
+# x is the input, y is the output
+x = tf.placeholder(dtype = tf.float32, shape = [None, 56, 56,3])
+y = tf.placeholder(dtype = tf.int32, shape = [None])
+mode="train"
+# Setting this mode is important so that learning and dropout may commmence
+# The layer structure is described above, implemented here:
+input_layer=x
+conv1=tf.layers.conv2d(inputs=input_layer,filters=32,kernel_size=[5,5],padding="same",activation=tf.nn.relu)
+pool1=tf.layers.max_pooling2d(inputs=conv1,pool_size=[2,2],strides=2)
+#conv2=tf.layers.conv2d(inputs=pool1,filters=64,kernel_size=[5,5],padding="same",activation=tf.nn.relu)
+#pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
+#pool2_flat = tf.reshape(pool2,[-1,7*7*64])
+pool1_flat = tf.reshape(pool1,[-1,28*28*32])
+dense = tf.layers.dense(inputs=pool1_flat, units=1024, activation=tf.nn.relu)
+#dropout=tf.layers.dropout(inputs=dense,rate=0.2,training=(mode=="train"))
+logits=tf.layers.dense(inputs=dense,units=3)
+#
+#
+# The cost function is the standard cross entropy with logits, training stekp is done by AdamOptimizer
+Loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels = y, logits = logits))
+train_op = tf.train.AdamOptimizer(learning_rate=0.0005).minimize(Loss)
+correct_pred = tf.argmax(logits, 1)
+accuracy = tf.reduce_mean(tf.cast(tf.equal(correct_pred,tf.cast(y,tf.int64)),tf.float64))
+
+
+#
+#Below is the code which instantiates the session and performs the training
+#A new batch of training data of size "batch_size" will be selected every epoch for "n_epochs" epochs
+#
+#
+
+reset_image=True   #If true, the input images will be resized to 56x56x3 if necessary
+reset_sess=True     #If true, session is reinstantiated and all learned parameters will be discarded
+restore_from_backup=False #restore a set of saved parameters
+run_train=True       #if true training will commence
+batch_size=300       #sets the number of samples to be considered during each epoch
+n_epochs=100         #sets the number of epochs for which the training will run
+if reset_image==True:
+    images=[transform.resize(image,(56,56,3)) for image in images]
+    test_images=[transform.resize(image,(56,56,3)) for image in test_images]
+    #images=[skimage.color.rgb2gray(image) for image in images]
+if reset_sess==True:
+    tf.set_random_seed(1234)
+    sess = tf.Session()
+    loss_list=[]      #We track the loss and accuracy during training 
+    train_acc_list=[]
+    test_acc_list=[]
+    sess.run(tf.global_variables_initializer())
+if restore_from_backup==True:
+    saver = tf.train.Saver()
+    saver.restore(sess, "/tmp/model.ckpt")
+    print("Model restored.")
+if run_train==True:
+    for i in range(n_epochs):
+            print('EPOCH', i)
+            mode="train"
+            batch_features,batch_labels = get_batch(images,labels,batch_size)
+            _, train_acc,loss = sess.run([train_op, accuracy,Loss], feed_dict={x: batch_features, y: batch_labels})
+            if i % 5 == 0:
+                loss_list.append(loss)
+                train_acc_list.append(train_acc)
+                mode="test"
+                test_acc=sess.run([accuracy], feed_dict={x: test_images, y: test_labels})
+                test_acc_list.append(test_acc)
+                print("test_acc=%s"%test_acc)
+                #print("Loss: ", loss)
+                #print("Accuracy val: ", accuracy_val)
+
+###### Plot the accuracy over time.  If there is a substantial difference between train and test accuracy
+###### then we have reason to believe that overfitting is a significant problem
+plt.figure(figsize=[20,10])
+plt.semilogx(test_acc_list)
+plt.semilogx(train_acc_list)
+plt.plot(np.arange(len(train_acc_list)),[np.max(test_acc_list)]*len(train_acc_list),'r-')
+plt.ylim([0,1])
+plt.show()
+print(np.max(test_acc_list))
+#######
+#once the model has been trained, the function dog_or_not will feed forward any image and plot the clasification probabilities
+def dog_or_not(input_image):
+    if np.shape(input_image)!=(56,56,3):
+        image=transform.resize(input_image,(56,56,3))
+        print("Transformed")
+    else:
+        image=input_image
+    X=sess.run([logits], feed_dict={x: (np.reshape(image,[1,56,56,3])), y: (np.reshape(0,[1,]))})
+    ps = np.exp(X * 1)
+    ps /= np.sum(ps)
+    plt.figure(figsize=[5,5])
+    print(ps)
+    plt.bar(np.arange(3),ps[0][0])
+    
+    plt.xticks(np.arange(3),["Dog","Hot Dog","Not a Dog at All"])
+    #plt.title("%s percent sure" %np.round(100*np.max(ps[0]),1))
+    plt.show()
+    io.imshow(input_image)
+    plt.show()
+dog_or_not(test_images[309])
