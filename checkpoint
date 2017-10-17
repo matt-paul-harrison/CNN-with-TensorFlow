@@ -1,0 +1,2 @@
+model_checkpoint_path: "101_Class"
+all_model_checkpoint_paths: "101_Class"
